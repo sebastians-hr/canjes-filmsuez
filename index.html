@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Filmsuez — Sistema de Canjes</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0a0a; color:#e0d5c1; font-family:'DM Sans',sans-serif; }
+  h1,h2,h3 { font-family:'DM Serif Display',serif; font-weight:400; }
+  ::-webkit-scrollbar { width:6px; }
+  ::-webkit-scrollbar-track { background:#0a0a0a; }
+  ::-webkit-scrollbar-thumb { background:#2a2520; border-radius:3px; }
+  select { appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b7355' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 12px center; padding-right:32px !important; }
+  input::placeholder { color:#5a5040; }
+  button { font-family:'DM Sans',sans-serif; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .fade-in { animation: fadeIn .3s ease both; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+// ╔═══════════════════════════════════════════════════════════════════╗
+// ║  🔥 FIREBASE CONFIG — COMPLETAR CON TUS DATOS (ver README)      ║
+// ╚═══════════════════════════════════════════════════════════════════╝
+const firebaseConfig = {
+  apiKey: "AIzaSyAL9jBt5rNJJ64DgsAXJu8mUIXTNqHjPtI",
+  authDomain: "canjes-filmsuez.firebaseapp.com",
+  databaseURL: "https://canjes-filmsuez-default-rtdb.firebaseio.com",
+  projectId: "canjes-filmsuez",
+  storageBucket: "canjes-filmsuez.firebasestorage.app",
+  messagingSenderId: "561618930706",
+  appId: "1:561618930706:web:867a6dda6acb83cad89ccb"
+};
+
+let db = null;
+const USE_FIREBASE = firebaseConfig.apiKey !== "TU_API_KEY";
+
+if (USE_FIREBASE) {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.database();
+}
+
+// ── Storage helpers (Firebase or localStorage fallback) ───────────
+const storage = {
+  async get(key) {
+    if (USE_FIREBASE) {
+      const snap = await db.ref(key).once("value");
+      return snap.val();
+    }
+    const v = localStorage.getItem("canje_" + key);
+    return v ? JSON.parse(v) : null;
+  },
+  async set(key, val) {
+    if (USE_FIREBASE) {
+      await db.ref(key).set(val);
+    } else {
+      localStorage.setItem("canje_" + key, JSON.stringify(val));
+    }
+  },
+  onValue(key, cb) {
+    if (USE_FIREBASE) {
+      db.ref(key).on("value", snap => cb(snap.val() || {}));
+      return () => db.ref(key).off("value");
+    }
+    // localStorage fallback: just call once
+    const v = localStorage.getItem("canje_" + key);
+    cb(v ? JSON.parse(v) : {});
+    // Poll for changes every 3 seconds
+    const interval = setInterval(() => {
+      const v2 = localStorage.getItem("canje_" + key);
+      cb(v2 ? JSON.parse(v2) : {});
+    }, 3000);
+    return () => clearInterval(interval);
+  }
+};
+
+// ── Product Database ──────────────────────────────────────────────
+const PRODUCTS = [
+  // ═══ CROWN MUSTANG ═══
+  {id:"CRW-001",brand:"Crown",cat:"Audio",model:"DMR 3000BT",name:"Reproductor Digital Multimedia Bluetooth",price:64599.90,img:"🎵"},
+  {id:"CRW-002",brand:"Crown",cat:"Audio",model:"DMK 8000BT",name:"Kit Reproductor + Parlantes 6.5\" 4-Vías",price:112399.90,img:"🔊"},
+  {id:"CRW-003",brand:"Crown",cat:"Audio",model:"DMK 9000BT",name:"Kit Reproductor + Parlantes 6x9\" 5-Vías",price:131999.90,img:"🔊"},
+  {id:"CRW-004",brand:"Crown",cat:"Audio",model:"ATOMIC 6.5",name:"Gabinete Acústico 3 Vías 6.5\"",price:80999.90,img:"🎶"},
+  {id:"CRW-005",brand:"Crown",cat:"Audio",model:"DJS 1002BT",name:"Gabinete Acústico 4 Vías 2 Woofer 10\"",price:366499.90,img:"🎤"},
+  {id:"CRW-006",brand:"Crown",cat:"Audio",model:"UNOO",name:"Parlante Portátil Bluetooth",price:33399.90,img:"📻"},
+  {id:"CRW-007",brand:"Crown",cat:"Audio",model:"SBL 6500BT",name:"Gabinete Acústico 4 Vías 6.5\" LED",price:424199.90,img:"🎶"},
+  {id:"CRW-008",brand:"Crown",cat:"Audio",model:"CYBERBEAT",name:"Bafle Potenciado Láser 2x12\"",price:621599.90,img:"🎸"},
+  {id:"CRW-009",brand:"Crown",cat:"Audio",model:"DOOS",name:"Parlante Portátil Bluetooth LED Multicolor",price:29999.90,img:"📻"},
+  {id:"CRW-010",brand:"Crown",cat:"Periféricos",model:"AKIRA",name:"RGB Gaming Mouse",price:14299.90,img:"🖱️"},
+  {id:"CRW-011",brand:"Crown",cat:"Periféricos",model:"KANEDA",name:"Dual Mode RGB Mouse BT 5.1",price:23399.90,img:"🖱️"},
+  {id:"CRW-012",brand:"Crown",cat:"Periféricos",model:"VISION FHD",name:"Webcam Portable FHD",price:43399.90,img:"📷"},
+  {id:"CRW-013",brand:"Crown",cat:"Periféricos",model:"VISION 720HD",name:"Webcam Portable 720P",price:41399.90,img:"📷"},
+  {id:"CRW-014",brand:"Crown",cat:"Periféricos",model:"FEEL",name:"Auriculares Gaming con Mic USB",price:33799.90,img:"🎧"},
+  {id:"CRW-015",brand:"Crown",cat:"Periféricos",model:"DECKARD",name:"Teclado Multifunción RGB",price:23499.90,img:"⌨️"},
+  {id:"CRW-016",brand:"Crown",cat:"Periféricos",model:"NEOTOKIO",name:"Teclado Mini RGB",price:31899.90,img:"⌨️"},
+  // ═══ KEN BROWN ═══
+  {id:"KB-001",brand:"Ken Brown",cat:"Audio",model:"MORPH",name:"Auricular Inalámbrico Multifunción",price:40699.90,img:"🎧"},
+  {id:"KB-002",brand:"Ken Brown",cat:"Audio",model:"BOOM 10",name:"Bafle Potenciado 2x10\" TWS",price:447299.90,img:"🔊"},
+  {id:"KB-003",brand:"Ken Brown",cat:"Audio",model:"MONSTERBOX",name:"Bafle Potenciado 2x12\" LED",price:529199.90,img:"🔊"},
+  {id:"KB-004",brand:"Ken Brown",cat:"Audio",model:"INFERNO",name:"Bafle Potenciado 2x15\" Extra Mega Bass",price:760799.90,img:"🎸"},
+  {id:"KB-005",brand:"Ken Brown",cat:"Audio",model:"MONSTER",name:"Bafle Potenciado 2x12\" LED Panel",price:601699.90,img:"🎶"},
+  {id:"KB-006",brand:"Ken Brown",cat:"Periféricos",model:"CLIP 720",name:"Webcam 720P",price:33799.90,img:"📷"},
+  {id:"KB-007",brand:"Ken Brown",cat:"Periféricos",model:"CLIP PRO",name:"Webcam 1080P Autofoco",price:43399.90,img:"📷"},
+  {id:"KB-008",brand:"Ken Brown",cat:"Muebles",model:"MAG 10",name:"Silla Gamer Ergonómica",price:278999.90,img:"🪑"},
+  // ═══ ULTRACOMB ═══
+  {id:"UC-001",brand:"Ultracomb",cat:"Cocina",model:"AN 2200",name:"Anafe Eléctrico 1500W",price:40499.90,img:"🔥"},
+  {id:"UC-002",brand:"Ultracomb",cat:"Cocina",model:"AN 2211",name:"Anafe Eléctrico Infrarrojo Touch",price:78999.90,img:"🔥"},
+  {id:"UC-003",brand:"Ultracomb",cat:"Cocina",model:"AN 4400",name:"Anafe Eléctrico Acero Inox",price:52499.90,img:"🔥"},
+  {id:"UC-004",brand:"Ultracomb",cat:"Cocina",model:"AN 6600",name:"Doble Anafe Eléctrico",price:63999.90,img:"🔥"},
+  {id:"UC-005",brand:"Ultracomb",cat:"Cocina",model:"AN 8800",name:"Doble Anafe Acero Inox",price:85499.90,img:"🔥"},
+  {id:"UC-006",brand:"Ultracomb",cat:"Cocina",model:"AN E604",name:"Anafe Eléctrico Empotrable Vitrocerámica",price:369999.90,img:"🔥"},
+  {id:"UC-007",brand:"Ultracomb",cat:"Cocina",model:"HM 8020",name:"Microondas 20L 700W",price:235999.90,img:"📦"},
+  {id:"UC-008",brand:"Ultracomb",cat:"Cocina",model:"HM 8023",name:"Microondas 23L 900W Grill",price:322999.90,img:"📦"},
+  {id:"UC-009",brand:"Ultracomb",cat:"Cocina",model:"HM 8028",name:"Microondas 28L 900W Grill",price:359999.90,img:"📦"},
+  {id:"UC-010",brand:"Ultracomb",cat:"Cocina",model:"PE 4902",name:"Pava Eléctrica 2200W 1.7L",price:45499.90,img:"☕"},
+  {id:"UC-011",brand:"Ultracomb",cat:"Cocina",model:"PE 4907",name:"Pava Eléctrica Mate/Café 2L",price:50599.90,img:"☕"},
+  {id:"UC-012",brand:"Ultracomb",cat:"Cocina",model:"PE 4909",name:"Pava Eléctrica Corte Mate 2200W",price:47899.90,img:"🧉"},
+  {id:"UC-013",brand:"Ultracomb",cat:"Cocina",model:"PE 4911",name:"Pava Eléctrica Digital Acero Inox",price:104999.90,img:"☕"},
+  {id:"UC-014",brand:"Ultracomb",cat:"Cocina",model:"PE 4916",name:"Pava Eléctrica Acero Inox Termostato",price:61099.90,img:"☕"},
+  {id:"UC-015",brand:"Ultracomb",cat:"Cocina",model:"PE 4920",name:"Pava Eléctrica Acero Inox Termómetro",price:71999.90,img:"☕"},
+  {id:"UC-016",brand:"Ultracomb",cat:"Cocina",model:"CA 2203",name:"Cafetera Automática 6 Pocillos",price:34399.90,img:"☕"},
+  {id:"UC-017",brand:"Ultracomb",cat:"Cocina",model:"CA 2205",name:"Cafetera Automática Timer 12 Pocillos",price:50799.90,img:"☕"},
+  {id:"UC-018",brand:"Ultracomb",cat:"Cocina",model:"CA 2208",name:"Cafetera Augusta 12 Pocillos",price:45299.90,img:"☕"},
+  {id:"UC-019",brand:"Ultracomb",cat:"Cocina",model:"CE 6108",name:"Cafetera Espresso 15 bar",price:171499.90,img:"☕"},
+  {id:"UC-020",brand:"Ultracomb",cat:"Cocina",model:"CE 6111",name:"Cafetera Espresso 20 bar Thermoblock",price:378499.90,img:"☕"},
+  {id:"UC-021",brand:"Ultracomb",cat:"Cocina",model:"CE 6118",name:"Cafetera Espresso 20 bar Acero Inox",price:247499.90,img:"☕"},
+  {id:"UC-022",brand:"Ultracomb",cat:"Cocina",model:"CE 6120",name:"Cafetera Espresso c/Molinillo 20 bar",price:574999.90,img:"☕"},
+  {id:"UC-023",brand:"Ultracomb",cat:"Cocina",model:"TE 4000B",name:"Termo Eléctrico 4 Temp Negro",price:115999.90,img:"☕"},
+  {id:"UC-024",brand:"Ultracomb",cat:"Cocina",model:"TE 4000R",name:"Termo Eléctrico 4 Temp Rojo",price:115999.90,img:"☕"},
+  {id:"UC-025",brand:"Ultracomb",cat:"Cocina",model:"EL 8501",name:"Espumador de Leche",price:58999.90,img:"🥛"},
+  {id:"UC-026",brand:"Ultracomb",cat:"Cocina",model:"MO 8100A",name:"Molinillo de Café Acero Inox",price:39999.90,img:"☕"},
+  {id:"UC-027",brand:"Ultracomb",cat:"Cocina",model:"EX 2308",name:"Exprimidor de Cítricos 120W",price:46999.90,img:"🍊"},
+  {id:"UC-028",brand:"Ultracomb",cat:"Cocina",model:"JG 2703",name:"Extractor de Jugos 600W",price:80499.90,img:"🥤"},
+  {id:"UC-029",brand:"Ultracomb",cat:"Cocina",model:"TO 4005",name:"Tostadora 750W 7 Niveles",price:34299.90,img:"🍞"},
+  {id:"UC-030",brand:"Ultracomb",cat:"Cocina",model:"TO 4010",name:"Tostadora 930W 3 Funciones",price:49499.90,img:"🍞"},
+  {id:"UC-031",brand:"Ultracomb",cat:"Cocina",model:"LC 2007",name:"Licuadora 650W 1.5L Plástica",price:63999.90,img:"🥤"},
+  {id:"UC-032",brand:"Ultracomb",cat:"Cocina",model:"LC 2012",name:"Licuadora 700W 1.5L Vidrio",price:85499.90,img:"🥤"},
+  {id:"UC-033",brand:"Ultracomb",cat:"Cocina",model:"LC 2026",name:"Licuadora 1200W 1.8L Acero",price:136999.90,img:"🥤"},
+  {id:"UC-034",brand:"Ultracomb",cat:"Cocina",model:"LC 2203",name:"Licuadora Mixer To Go 350W",price:53499.90,img:"🥤"},
+  {id:"UC-035",brand:"Ultracomb",cat:"Cocina",model:"LM 2530",name:"Licuadora de Mano 1000W",price:104999.90,img:"🥄"},
+  {id:"UC-036",brand:"Ultracomb",cat:"Cocina",model:"LM 2550",name:"Licuadora de Mano 1200W Batidor",price:79599.90,img:"🥄"},
+  {id:"UC-037",brand:"Ultracomb",cat:"Cocina",model:"LM 2552",name:"Licuadora de Mano 600W",price:50499.90,img:"🥄"},
+  {id:"UC-038",brand:"Ultracomb",cat:"Cocina",model:"LM 2555",name:"Licuadora de Mano 1200W Picador",price:97499.90,img:"🥄"},
+  {id:"UC-039",brand:"Ultracomb",cat:"Cocina",model:"SW 2800",name:"Sandwichera 4 Sándwiches",price:31499.90,img:"🥪"},
+  {id:"UC-040",brand:"Ultracomb",cat:"Cocina",model:"SW 2801",name:"Sandwichera 3 en 1",price:62699.90,img:"🥪"},
+  {id:"UC-041",brand:"Ultracomb",cat:"Cocina",model:"PQ 8700",name:"Panquequera 700W",price:45099.90,img:"🥞"},
+  {id:"UC-042",brand:"Ultracomb",cat:"Cocina",model:"WM 2900",name:"Wafflera 850W",price:37999.90,img:"🧇"},
+  {id:"UC-043",brand:"Ultracomb",cat:"Cocina",model:"BB 2106",name:"Batidora Planetaria 800W 5L",price:229999.90,img:"🍰"},
+  {id:"UC-044",brand:"Ultracomb",cat:"Cocina",model:"BM 2608",name:"Batidora de Mano 500W",price:60399.90,img:"🍰"},
+  {id:"UC-045",brand:"Ultracomb",cat:"Cocina",model:"FA 2900",name:"Fábrica de Algodón de Azúcar",price:66999.90,img:"🍭"},
+  {id:"UC-046",brand:"Ultracomb",cat:"Cocina",model:"PO 2700",name:"Pochoclera 1200W",price:36299.90,img:"🍿"},
+  {id:"UC-047",brand:"Ultracomb",cat:"Cocina",model:"BL 6001",name:"Balanza 3kg LED",price:19999.90,img:"⚖️"},
+  {id:"UC-048",brand:"Ultracomb",cat:"Cocina",model:"BL 6002",name:"Balanza Digital con Bol 3kg",price:23499.90,img:"⚖️"},
+  {id:"UC-049",brand:"Ultracomb",cat:"Cocina",model:"PC 6800",name:"Picadora 600W 1.2L",price:49499.90,img:"🔪"},
+  {id:"UC-050",brand:"Ultracomb",cat:"Cocina",model:"PC 6802",name:"Picadora 200W 300ml",price:30599.90,img:"🔪"},
+  {id:"UC-051",brand:"Ultracomb",cat:"Cocina",model:"GR 2600",name:"Rallador Eléctrico 150W",price:60999.90,img:"🧀"},
+  {id:"UC-052",brand:"Ultracomb",cat:"Cocina",model:"FR 8300",name:"Freidora/Fondue 1.5L",price:74999.90,img:"🍟"},
+  {id:"UC-053",brand:"Ultracomb",cat:"Cocina",model:"FR 8301",name:"Freidora 1.5L Acero Inox",price:76999.90,img:"🍟"},
+  {id:"UC-054",brand:"Ultracomb",cat:"Cocina",model:"FR 8612",name:"Freidora por Aire 3L 1200W",price:116199.90,img:"🍟"},
+  {id:"UC-055",brand:"Ultracomb",cat:"Cocina",model:"FR 8616",name:"Freidora por Aire 6.5L 1600W",price:140399.90,img:"🍟"},
+  {id:"UC-056",brand:"Ultracomb",cat:"Cocina",model:"FR 8618",name:"Freidora por Aire 9L 1700W",price:161799.90,img:"🍟"},
+  {id:"UC-057",brand:"Ultracomb",cat:"Cocina",model:"FR 8620",name:"Freidora por Aire 11.8L",price:198999.90,img:"🍟"},
+  {id:"UC-058",brand:"Ultracomb",cat:"Cocina",model:"FR 8622",name:"Freidora por Aire 14L 1800W",price:221499.90,img:"🍟"},
+  {id:"UC-059",brand:"Ultracomb",cat:"Cocina",model:"FR 8626",name:"Freidora por Aire Doble 11.2L",price:242999.90,img:"🍟"},
+  {id:"UC-060",brand:"Ultracomb",cat:"Cocina",model:"VP 4603",name:"Vaporera 900W 8.5L",price:82999.90,img:"🥦"},
+  {id:"UC-061",brand:"Ultracomb",cat:"Cocina",model:"PS 4006",name:"Olla Eléctrica a Presión 6L",price:182999.90,img:"🍲"},
+  {id:"UC-062",brand:"Ultracomb",cat:"Cocina",model:"HP 2502",name:"Máquina para Pan 650W",price:174299.90,img:"🍞"},
+  {id:"UC-063",brand:"Ultracomb",cat:"Cocina",model:"SE 2006",name:"Sopera Eléctrica 1.6L",price:135999.90,img:"🍜"},
+  {id:"UC-064",brand:"Ultracomb",cat:"Cocina",model:"YG 2707",name:"Yogurtera 7 Jarros Acero Inox",price:44999.90,img:"🥛"},
+  {id:"UC-065",brand:"Ultracomb",cat:"Cocina",model:"FS 6301",name:"Cortadora de Alimentos 150W",price:128999.90,img:"🔪"},
+  {id:"UC-066",brand:"Ultracomb",cat:"Hogar",model:"PL 4170",name:"Plancha a Vapor 1400W",price:32399.90,img:"👔"},
+  {id:"UC-067",brand:"Ultracomb",cat:"Hogar",model:"PL 4180",name:"Plancha a Vapor 2250W Cerámica",price:52299.90,img:"👔"},
+  {id:"UC-068",brand:"Ultracomb",cat:"Hogar",model:"AS 4110",name:"Aspiradora Inalámbrica 45W",price:57199.90,img:"🧹"},
+  {id:"UC-069",brand:"Ultracomb",cat:"Hogar",model:"AS 4114",name:"Aspiradora Inalámbrica HEPA 60W",price:39799.90,img:"🧹"},
+  {id:"UC-070",brand:"Ultracomb",cat:"Hogar",model:"AS 4201",name:"Aspiradora Canister 1400W",price:99999.90,img:"🧹"},
+  {id:"UC-071",brand:"Ultracomb",cat:"Hogar",model:"AS 4220",name:"Aspiradora Sin Bolsa 1600W",price:97499.90,img:"🧹"},
+  {id:"UC-072",brand:"Ultracomb",cat:"Hogar",model:"AS 4228",name:"Aspiradora Sin Bolsa 2000W",price:156999.90,img:"🧹"},
+  {id:"UC-073",brand:"Ultracomb",cat:"Hogar",model:"AS 4230",name:"Aspiradora Canister 2200W 7L",price:228999.90,img:"🧹"},
+  {id:"UC-074",brand:"Ultracomb",cat:"Hogar",model:"AS 4305",name:"Aspiradora Agua/Polvo 14L",price:102499.90,img:"🧹"},
+  {id:"UC-075",brand:"Ultracomb",cat:"Hogar",model:"AS 4308",name:"Aspiradora Acero Inox 16L",price:117999.90,img:"🧹"},
+  {id:"UC-076",brand:"Ultracomb",cat:"Hogar",model:"AS 4310",name:"Aspiradora Agua/Polvo 23L",price:136999.90,img:"🧹"},
+  {id:"UC-077",brand:"Ultracomb",cat:"Hogar",model:"AS 4314",name:"Aspiradora Tambor Acero 34L",price:171499.90,img:"🧹"},
+  {id:"UC-078",brand:"Ultracomb",cat:"Hogar",model:"AS 6061",name:"Robot Aspirador 1600Pa",price:230999.90,img:"🤖"},
+  {id:"UC-079",brand:"Ultracomb",cat:"Hogar",model:"AS 6062",name:"Robot Aspirador Giroscópico 2000Pa",price:259999.90,img:"🤖"},
+  {id:"UC-080",brand:"Ultracomb",cat:"Hogar",model:"AS 8080",name:"Robot Aspirador 2000Pa App",price:466999.90,img:"🤖"},
+  {id:"UC-081",brand:"Ultracomb",cat:"Hogar",model:"HDL 800",name:"Hidrolavadora 1600W 130bar",price:179999.90,img:"💧"},
+  {id:"UC-082",brand:"Ultracomb",cat:"Personal",model:"SC 4606",name:"Secador Tourmaline Ion 2200W",price:43999.90,img:"💇"},
+  {id:"UC-083",brand:"Ultracomb",cat:"Personal",model:"SC 4607",name:"Secador AC Tourmaline 2000W",price:61499.90,img:"💇"},
+  {id:"UC-084",brand:"Ultracomb",cat:"Personal",model:"SC 4620",name:"Secador Plegable 2200W",price:42599.90,img:"💇"},
+  {id:"UC-085",brand:"Ultracomb",cat:"Personal",model:"SC 4622",name:"Secador Magnético 2200W",price:64499.90,img:"💇"},
+  {id:"UC-086",brand:"Ultracomb",cat:"Personal",model:"SC 4650",name:"Secador Cepillo 1200W 2en1",price:40499.90,img:"💇"},
+  {id:"UC-087",brand:"Ultracomb",cat:"Personal",model:"SC 4663",name:"Secador c/Soporte Pared 2000W",price:56999.90,img:"💇"},
+  {id:"UC-088",brand:"Ultracomb",cat:"Personal",model:"SC 4682",name:"Secador BLDC 1800W Display LED",price:94999.90,img:"💇"},
+  {id:"UC-089",brand:"Ultracomb",cat:"Personal",model:"DEVOTION",name:"Combo Secador + Alisador",price:73499.90,img:"💇"},
+  {id:"UC-090",brand:"Ultracomb",cat:"Personal",model:"AP 4401",name:"Alisador Tourmaline 210°C",price:21999.90,img:"✨"},
+  {id:"UC-091",brand:"Ultracomb",cat:"Personal",model:"AP 4422",name:"Alisador Avocado Gloss Digital",price:34999.90,img:"✨"},
+  {id:"UC-092",brand:"Ultracomb",cat:"Personal",model:"AP 4426",name:"Alisador Ultra Wide ION Ceramic",price:40999.90,img:"✨"},
+  {id:"UC-093",brand:"Ultracomb",cat:"Personal",model:"BC 4700",name:"Cortadora de Cabello c/Cable",price:32999.90,img:"💈"},
+  {id:"UC-094",brand:"Ultracomb",cat:"Personal",model:"BC 4702",name:"Cortadora Profesional a Bobina",price:29999.90,img:"💈"},
+  {id:"UC-095",brand:"Ultracomb",cat:"Personal",model:"BC 4712",name:"Cortadora Magnética USB LED",price:44999.90,img:"💈"},
+  {id:"UC-096",brand:"Ultracomb",cat:"Personal",model:"BK 4900",name:"Cortadora Inalámbrica Styler Kit",price:52999.90,img:"💈"},
+  {id:"UC-097",brand:"Ultracomb",cat:"Personal",model:"BK 4918",name:"Afeitadora y Recortadora LED",price:36999.90,img:"💈"},
+  {id:"UC-098",brand:"Ultracomb",cat:"Personal",model:"VK 4803",name:"Recortadora Multifunción",price:12399.90,img:"💈"},
+  {id:"UC-099",brand:"Ultracomb",cat:"Personal",model:"DP 2006",name:"Depilador Profesional 3 Cabezales",price:27999.90,img:"✨"},
+  {id:"UC-100",brand:"Ultracomb",cat:"Cocina",model:"UC 17",name:"Horno Eléctrico 17L 1280W",price:99199.90,img:"🔥"},
+  {id:"UC-101",brand:"Ultracomb",cat:"Cocina",model:"UC 32N",name:"Horno Eléctrico 32L 1500W",price:170599.90,img:"🔥"},
+  {id:"UC-102",brand:"Ultracomb",cat:"Cocina",model:"UC 45CN",name:"Horno Eléctrico 45L Convección",price:208999.90,img:"🔥"},
+  {id:"UC-103",brand:"Ultracomb",cat:"Cocina",model:"UC 45ACN",name:"Horno Eléctrico 45L Doble Anafe",price:248999.90,img:"🔥"},
+  {id:"UC-104",brand:"Ultracomb",cat:"Cocina",model:"UC 50C",name:"Horno Eléctrico 50L Convección",price:220999.90,img:"🔥"},
+  {id:"UC-105",brand:"Ultracomb",cat:"Cocina",model:"UC 50AC",name:"Horno Eléctrico 50L Doble Anafe",price:259999.90,img:"🔥"},
+  {id:"UC-106",brand:"Ultracomb",cat:"Cocina",model:"UC 55ACN",name:"Horno Eléctrico 55L Doble Anafe 2000W",price:289999.90,img:"🔥"},
+  {id:"UC-107",brand:"Ultracomb",cat:"Cocina",model:"UC 70CN",name:"Horno Eléctrico 70L 2000W",price:264999.90,img:"🔥"},
+  {id:"UC-108",brand:"Ultracomb",cat:"Cocina",model:"UC 70ACN",name:"Horno Eléctrico 70L Doble Anafe",price:304999.90,img:"🔥"},
+  {id:"UC-109",brand:"Ultracomb",cat:"Cocina",model:"UC 80CIN",name:"Horno Eléctrico 80L 1900W",price:309999.90,img:"🔥"},
+  {id:"UC-110",brand:"Ultracomb",cat:"Cocina",model:"UC 110CLN",name:"Horno Eléctrico 110L 2400W",price:364999.90,img:"🔥"},
+  {id:"UC-111",brand:"Ultracomb",cat:"Cocina",model:"UC E60M",name:"Horno Eléctrico Empotrable 2300W",price:679999.90,img:"🔥"},
+  {id:"UC-112",brand:"Ultracomb",cat:"Refrigeración",model:"CV 6008",name:"Cava Termoeléctrica 8 Botellas",price:284999.90,img:"🍷"},
+  {id:"UC-113",brand:"Ultracomb",cat:"Refrigeración",model:"CV 6012",name:"Cava Termoeléctrica 12 Botellas",price:318999.90,img:"🍷"},
+  {id:"UC-114",brand:"Ultracomb",cat:"Refrigeración",model:"CV 6016",name:"Cava Termoeléctrica 16 Botellas",price:349999.90,img:"🍷"},
+  {id:"UC-115",brand:"Ultracomb",cat:"Refrigeración",model:"CV 6024D",name:"Cava Termoeléctrica 24 Botellas",price:548999.90,img:"🍷"},
+  {id:"UC-116",brand:"Ultracomb",cat:"Refrigeración",model:"UTC-48RVI",name:"Heladera Bajo Mesada Vintage 50L",price:499999.90,img:"❄️"},
+  {id:"UC-117",brand:"Ultracomb",cat:"Cocina",model:"LC 2500G",name:"Licuadora Profesional 1800W 2.5L",price:329999.90,img:"🥤"},
+  {id:"UC-118",brand:"Ultracomb",cat:"Cocina",model:"FS-6801G",name:"Cortadora Fiambre 195mm",price:614999.90,img:"🔪"},
+  {id:"UC-119",brand:"Ultracomb",cat:"Cocina",model:"FS-6802G",name:"Cortadora Fiambre 250mm",price:759999.90,img:"🔪"},
+  {id:"UC-120",brand:"Ultracomb",cat:"Cocina",model:"FS-6803G",name:"Cortadora Fiambre 300mm",price:1059999.90,img:"🔪"},
+  {id:"UC-121",brand:"Ultracomb",cat:"Hogar",model:"VT 4803",name:"Turbo Ventilador 20\"",price:85299.90,img:"🌀"},
+  {id:"UC-122",brand:"Ultracomb",cat:"Hogar",model:"VT 4805",name:"Ventilador de Pie 18\"",price:106699.90,img:"🌀"},
+  {id:"UC-123",brand:"Ultracomb",cat:"Hogar",model:"VT 4808",name:"Ventilador de Pie 20\"",price:117399.90,img:"🌀"},
+  // ═══ YELMO ═══
+  {id:"YL-001",brand:"Yelmo",cat:"Hogar",model:"AS 3210",name:"Aspirador Canister 1100W",price:93499.90,img:"🧹"},
+  {id:"YL-002",brand:"Yelmo",cat:"Hogar",model:"AS 3224",name:"Aspiradora Bagless 1600W",price:129499.90,img:"🧹"},
+  {id:"YL-003",brand:"Yelmo",cat:"Hogar",model:"AS 3228",name:"Aspirador Sin Bolsa 2000W",price:156999.90,img:"🧹"},
+  {id:"YL-004",brand:"Yelmo",cat:"Hogar",model:"AS 3239",name:"Aspiradora Auto 12V",price:31799.90,img:"🚗"},
+  {id:"YL-005",brand:"Yelmo",cat:"Hogar",model:"AS 3240",name:"Aspiradora Recargable HEPA",price:46699.90,img:"🧹"},
+  {id:"YL-006",brand:"Yelmo",cat:"Hogar",model:"AS 3244",name:"Aspiradora Recargable 80W",price:65699.90,img:"🧹"},
+  {id:"YL-007",brand:"Yelmo",cat:"Hogar",model:"AS 3260",name:"Aspiradora Inalámbrica 120W",price:193999.90,img:"🧹"},
+  {id:"YL-008",brand:"Yelmo",cat:"Hogar",model:"AS 3314",name:"Aspiradora Acero Inox 16L",price:119999.90,img:"🧹"},
+  {id:"YL-009",brand:"Yelmo",cat:"Hogar",model:"AS 3323",name:"Aspiradora 1400W 23L",price:113999.90,img:"🧹"},
+  {id:"YL-010",brand:"Yelmo",cat:"Hogar",model:"AS 7070",name:"Robot Aspirador HEPA",price:279999.90,img:"🤖"},
+  {id:"YL-011",brand:"Yelmo",cat:"Hogar",model:"AS 7077L",name:"Robot Aspirador Láser",price:429999.90,img:"🤖"},
+  {id:"YL-012",brand:"Yelmo",cat:"Hogar",model:"PL 3170",name:"Plancha a Vapor 1400W",price:32399.90,img:"👔"},
+  {id:"YL-013",brand:"Yelmo",cat:"Hogar",model:"PL 3180",name:"Plancha a Vapor 2250W Cerámica",price:52299.90,img:"👔"},
+  {id:"YL-014",brand:"Yelmo",cat:"Cocina",model:"HM 9020",name:"Microondas 20L 700W",price:232999.90,img:"📦"},
+  {id:"YL-015",brand:"Yelmo",cat:"Cocina",model:"HM 9023",name:"Microondas 23L Grill",price:322999.90,img:"📦"},
+  {id:"YL-016",brand:"Yelmo",cat:"Cocina",model:"AN 9901",name:"Anafe Eléctrico Infrarrojo Touch",price:82799.90,img:"🔥"},
+  {id:"YL-017",brand:"Yelmo",cat:"Cocina",model:"AN 9906",name:"Doble Anafe Eléctrico",price:57999.90,img:"🔥"},
+  {id:"YL-018",brand:"Yelmo",cat:"Cocina",model:"TO 3006",name:"Tostadora 700W 6 Niveles",price:31599.90,img:"🍞"},
+  {id:"YL-019",brand:"Yelmo",cat:"Cocina",model:"TO 3011",name:"Tostadora 930W 7 Niveles",price:52599.90,img:"🍞"},
+  {id:"YL-020",brand:"Yelmo",cat:"Cocina",model:"PE 3900",name:"Pava Eléctrica 1.7L",price:45499.90,img:"☕"},
+  {id:"YL-021",brand:"Yelmo",cat:"Cocina",model:"PE 3902K",name:"Pava Eléctrica Mate/Café",price:50599.90,img:"🧉"},
+  {id:"YL-022",brand:"Yelmo",cat:"Cocina",model:"PE 3909",name:"Pava Eléctrica Corte Mate",price:47899.90,img:"🧉"},
+  {id:"YL-023",brand:"Yelmo",cat:"Cocina",model:"PE 3911",name:"Pava Digital Acero Inox 2200W",price:64999.90,img:"☕"},
+  {id:"YL-024",brand:"Yelmo",cat:"Cocina",model:"PE 3912",name:"Pava Digital Doble Pared",price:81999.90,img:"☕"},
+  {id:"YL-025",brand:"Yelmo",cat:"Cocina",model:"PE 3922",name:"Pava Vidrio Templado Digital",price:76999.90,img:"☕"},
+  {id:"YL-026",brand:"Yelmo",cat:"Cocina",model:"EX 1303",name:"Exprimidor de Cítricos 40W",price:25999.90,img:"🍊"},
+  {id:"YL-027",brand:"Yelmo",cat:"Cocina",model:"JG 1707",name:"Extractor de Jugos 800W",price:83499.90,img:"🥤"},
+  {id:"YL-028",brand:"Yelmo",cat:"Cocina",model:"CA 7108",name:"Cafetera 12 Tazas 800W",price:38999.90,img:"☕"},
+  {id:"YL-029",brand:"Yelmo",cat:"Cocina",model:"CA 7115",name:"Cafetera 12 Tazas c/Visor",price:48499.90,img:"☕"},
+  {id:"YL-030",brand:"Yelmo",cat:"Cocina",model:"CE 5107",name:"Cafetera Espresso 19 bar 1200W",price:201999.90,img:"☕"},
+  {id:"YL-031",brand:"Yelmo",cat:"Cocina",model:"CE 5110",name:"Cafetera Espresso 19 bar 1100W",price:174999.90,img:"☕"},
+  {id:"YL-032",brand:"Yelmo",cat:"Cocina",model:"CE 5119",name:"Cafetera Express 20 bar c/Leche",price:326999.90,img:"☕"},
+  {id:"YL-033",brand:"Yelmo",cat:"Cocina",model:"CE 5125",name:"Cafetera Espresso 20 bar c/Molinillo",price:392999.90,img:"☕"},
+  {id:"YL-034",brand:"Yelmo",cat:"Cocina",model:"MO 7100",name:"Molinillo de Café 150W",price:27799.90,img:"☕"},
+  {id:"YL-035",brand:"Yelmo",cat:"Cocina",model:"EL 9501",name:"Espumador de Leche 500W",price:73499.90,img:"🥛"},
+  {id:"YL-036",brand:"Yelmo",cat:"Cocina",model:"LC 1009",name:"Licuadora 650W 1.5L Plástica",price:63999.90,img:"🥤"},
+  {id:"YL-037",brand:"Yelmo",cat:"Cocina",model:"LC 1010",name:"Licuadora 700W 1.5L Vidrio",price:74999.90,img:"🥤"},
+  {id:"YL-038",brand:"Yelmo",cat:"Cocina",model:"LC 1015",name:"Licuadora 750W 1.5L Vidrio",price:97999.90,img:"🥤"},
+  {id:"YL-039",brand:"Yelmo",cat:"Cocina",model:"LM 1530",name:"Licuadora de Mano 800W",price:97999.90,img:"🥄"},
+  {id:"YL-040",brand:"Yelmo",cat:"Cocina",model:"LM 1535",name:"Licuadora de Mano 800W c/Picador",price:112999.90,img:"🥄"},
+  {id:"YL-041",brand:"Yelmo",cat:"Cocina",model:"LM 1550",name:"Licuadora de Mano 1200W",price:69299.90,img:"🥄"},
+  {id:"YL-042",brand:"Yelmo",cat:"Cocina",model:"LM 1551",name:"Licuadora de Mano 600W",price:46999.90,img:"🥄"},
+  {id:"YL-043",brand:"Yelmo",cat:"Cocina",model:"LM 1555",name:"Licuadora de Mano 1200W Picador",price:92999.90,img:"🥄"},
+  {id:"YL-044",brand:"Yelmo",cat:"Cocina",model:"BB 1103",name:"Batidora Planetaria 600W 4L",price:185999.90,img:"🍰"},
+  {id:"YL-045",brand:"Yelmo",cat:"Cocina",model:"BM 1608",name:"Batidora de Mano 500W",price:60399.90,img:"🍰"},
+  {id:"YL-046",brand:"Yelmo",cat:"Cocina",model:"SW 1800",name:"Sandwichera 4 Sándwiches",price:30999.90,img:"🥪"},
+  {id:"YL-047",brand:"Yelmo",cat:"Cocina",model:"SW 1801",name:"Sandwichera 3 en 1",price:62499.90,img:"🥪"},
+  {id:"YL-048",brand:"Yelmo",cat:"Cocina",model:"WM 1901",name:"Wafflera 900W",price:30999.90,img:"🧇"},
+  {id:"YL-049",brand:"Yelmo",cat:"Cocina",model:"PO 3700",name:"Pochoclera 1400W",price:45199.90,img:"🍿"},
+  {id:"YL-050",brand:"Yelmo",cat:"Cocina",model:"BL 7001",name:"Balanza Digital 3kg",price:21499.90,img:"⚖️"},
+  {id:"YL-051",brand:"Yelmo",cat:"Cocina",model:"PC 5800",name:"Picadora 500W 2L Vidrio",price:53499.90,img:"🔪"},
+  {id:"YL-052",brand:"Yelmo",cat:"Cocina",model:"PC 5811",name:"Picadora Recargable USB-C 300ml",price:31999.90,img:"🔪"},
+  {id:"YL-053",brand:"Yelmo",cat:"Cocina",model:"PC 5812",name:"Picadora USB-C 800ml + 3 contenedores",price:62999.90,img:"🔪"},
+  {id:"YL-054",brand:"Yelmo",cat:"Cocina",model:"FH 3300",name:"Heladora 1.5L",price:59999.90,img:"🍦"},
+  {id:"YL-055",brand:"Yelmo",cat:"Cocina",model:"YG 1708",name:"Yogurtera 8 Jarros Acero Inox",price:54499.90,img:"🥛"},
+  {id:"YL-056",brand:"Yelmo",cat:"Cocina",model:"YG 1717",name:"Yogurtera Griego/Skyr 1.5L",price:33999.90,img:"🥛"},
+  {id:"YL-057",brand:"Yelmo",cat:"Cocina",model:"HP 3502",name:"Máquina de Pan 650W",price:156999.90,img:"🍞"},
+  {id:"YL-058",brand:"Yelmo",cat:"Cocina",model:"FR 7300",name:"Freidora 0.9L 1200W",price:58999.90,img:"🍟"},
+  {id:"YL-059",brand:"Yelmo",cat:"Cocina",model:"FR 7309",name:"Freidora por Aire 5L 1400W",price:125999.90,img:"🍟"},
+  {id:"YL-060",brand:"Yelmo",cat:"Cocina",model:"FR 7310",name:"Freidora por Aire 5L Digital",price:127999.90,img:"🍟"},
+  {id:"YL-061",brand:"Yelmo",cat:"Cocina",model:"FR 7311",name:"Freidora por Aire 7L 1700W",price:145499.90,img:"🍟"},
+  {id:"YL-062",brand:"Yelmo",cat:"Cocina",model:"FR 7313",name:"Freidora por Aire 9L 13 Programas",price:174999.90,img:"🍟"},
+  {id:"YL-063",brand:"Yelmo",cat:"Cocina",model:"FR 7317",name:"Freidora por Aire Doble 9L",price:198999.90,img:"🍟"},
+  {id:"YL-064",brand:"Yelmo",cat:"Cocina",model:"FR 7319",name:"Freidora por Aire 11.8L",price:193999.90,img:"🍟"},
+  {id:"YL-065",brand:"Yelmo",cat:"Cocina",model:"FR 7321",name:"Freidora por Aire 17L Horno",price:154399.90,img:"🍟"},
+  {id:"YL-066",brand:"Yelmo",cat:"Cocina",model:"FR 7325",name:"Freidora Multi Cocción 7L 2400W",price:275999.90,img:"🍟"},
+  {id:"YL-067",brand:"Yelmo",cat:"Cocina",model:"VP 5601",name:"Vaporera Digital 850W 8.5L",price:91499.90,img:"🥦"},
+  {id:"YL-068",brand:"Yelmo",cat:"Cocina",model:"GC 3003",name:"Olla Eléctrica 3L 1000W",price:87499.90,img:"🍲"},
+  {id:"YL-069",brand:"Yelmo",cat:"Cocina",model:"PS 7006",name:"Olla Eléctrica a Presión 6L",price:176499.90,img:"🍲"},
+  {id:"YL-070",brand:"Yelmo",cat:"Cocina",model:"AR 9801",name:"Arrocera 700W 1.8L",price:65499.90,img:"🍚"},
+  {id:"YL-071",brand:"Yelmo",cat:"Cocina",model:"SV 9101",name:"Sellador por Vacío",price:84999.90,img:"📦"},
+  {id:"YL-072",brand:"Yelmo",cat:"Personal",model:"SC 3620",name:"Secador Plegable 1400W",price:26199.90,img:"💇"},
+  {id:"YL-073",brand:"Yelmo",cat:"Personal",model:"SC 3625",name:"Secador Tourmaline 2000W",price:49999.90,img:"💇"},
+  {id:"YL-074",brand:"Yelmo",cat:"Personal",model:"SC 3630",name:"Secador AC Profesional 2200W",price:62999.90,img:"💇"},
+  {id:"YL-075",brand:"Yelmo",cat:"Personal",model:"SC 3650",name:"Secador Cepillo Antifrizz 1200W",price:44099.90,img:"💇"},
+  {id:"YL-076",brand:"Yelmo",cat:"Personal",model:"SC 3655",name:"Secador Luxury 1600W Bivolt",price:37999.90,img:"💇"},
+  {id:"YL-077",brand:"Yelmo",cat:"Personal",model:"SC 3665",name:"Secador Tourmaline 2300W",price:51999.90,img:"💇"},
+  {id:"YL-078",brand:"Yelmo",cat:"Personal",model:"ESENCIA",name:"Combo Secador + Alisador ION-ARGAN",price:68999.90,img:"💇"},
+  {id:"YL-079",brand:"Yelmo",cat:"Personal",model:"AP 3310",name:"Alisador Tourmaline 210°C",price:21499.90,img:"✨"},
+  {id:"YL-080",brand:"Yelmo",cat:"Personal",model:"AP 3312",name:"Alisador Digital Tourmaline 230°C",price:39999.90,img:"✨"},
+  {id:"YL-081",brand:"Yelmo",cat:"Personal",model:"AP 3361",name:"Alisador Aceite de Palta",price:29999.90,img:"✨"},
+  {id:"YL-082",brand:"Yelmo",cat:"Personal",model:"AP 3362",name:"Alisador Titanio",price:34999.90,img:"✨"},
+  {id:"YL-083",brand:"Yelmo",cat:"Personal",model:"AP 3363",name:"Alisador Keratina Titanio",price:44999.90,img:"✨"},
+  {id:"YL-084",brand:"Yelmo",cat:"Personal",model:"AP 3428",name:"Alisador Dual Plates Ceramic",price:49999.90,img:"✨"},
+  {id:"YL-085",brand:"Yelmo",cat:"Personal",model:"BC 3701",name:"Cortadora de Cabello c/Cable",price:23499.90,img:"💈"},
+  {id:"YL-086",brand:"Yelmo",cat:"Personal",model:"BC 3705",name:"Cortadora Inalámbrica LED",price:36999.90,img:"💈"},
+  {id:"YL-087",brand:"Yelmo",cat:"Personal",model:"BK 3911",name:"Cortadora Recargable USB-C",price:21799.90,img:"💈"},
+  {id:"YL-088",brand:"Yelmo",cat:"Personal",model:"BK 3919",name:"Cortadora Recargable 3 Cuchillas",price:52799.90,img:"💈"},
+  {id:"YL-089",brand:"Yelmo",cat:"Personal",model:"RC 9707",name:"Trimmer Inalámbrico USB",price:25999.90,img:"💈"},
+  {id:"YL-090",brand:"Yelmo",cat:"Cocina",model:"YL 17",name:"Horno Eléctrico 17L 1280W",price:99199.90,img:"🔥"},
+  {id:"YL-091",brand:"Yelmo",cat:"Cocina",model:"YL 32N",name:"Horno Eléctrico 32L 1500W",price:170599.90,img:"🔥"},
+  {id:"YL-092",brand:"Yelmo",cat:"Cocina",model:"YL 45N",name:"Horno Eléctrico 45L 1600W",price:190999.90,img:"🔥"},
+  {id:"YL-093",brand:"Yelmo",cat:"Cocina",model:"YL 45AN",name:"Horno Eléctrico 45L Doble Anafe",price:230999.90,img:"🔥"},
+  {id:"YL-094",brand:"Yelmo",cat:"Cocina",model:"YL 50",name:"Horno Eléctrico 50L 1600W",price:202999.90,img:"🔥"},
+  {id:"YL-095",brand:"Yelmo",cat:"Cocina",model:"YL 50A",name:"Horno Eléctrico 50L Doble Anafe",price:242999.90,img:"🔥"},
+  {id:"YL-096",brand:"Yelmo",cat:"Cocina",model:"YL 70ACN",name:"Horno Eléctrico 70L Doble Anafe",price:279999.90,img:"🔥"},
+  {id:"YL-097",brand:"Yelmo",cat:"Cocina",model:"YL 80CN",name:"Horno Eléctrico 80L Convección",price:281999.90,img:"🔥"},
+  {id:"YL-098",brand:"Yelmo",cat:"Cocina",model:"YL 95CLN",name:"Horno Eléctrico 95L 2200W",price:312999.90,img:"🔥"},
+  {id:"YL-099",brand:"Yelmo",cat:"Cocina",model:"YL 140CLN",name:"Horno Eléctrico 140L 2800W",price:381499.90,img:"🔥"},
+  {id:"YL-100",brand:"Yelmo",cat:"Hogar",model:"TC 7001",name:"Turbo Caloventor 2000W",price:63599.90,img:"🔥"},
+  {id:"YL-101",brand:"Yelmo",cat:"Hogar",model:"HG 5002",name:"Estufa Infrarroja c/Turbo",price:108199.90,img:"🔥"},
+  {id:"YL-102",brand:"Yelmo",cat:"Hogar",model:"TORNADO",name:"Turbo Ventilador 20\"",price:85299.90,img:"🌀"},
+  {id:"YL-103",brand:"Yelmo",cat:"Hogar",model:"VT 3818",name:"Ventilador de Pie 18\"",price:106699.90,img:"🌀"},
+  {id:"YL-104",brand:"Yelmo",cat:"Hogar",model:"VT 3820",name:"Ventilador de Pie 20\"",price:117399.90,img:"🌀"},
+];
+
+const FAMILIES = {
+  "Suez J":["Javi","Marce","Mati","Cami","Jaz","Santi"],
+  "Suez M":["Marian","Kari","Max","Sebi","Caro"],
+  "Cababie":["Nico","Georgi","Coni"],
+  "Pichersky":["Fede","Eze","Flor","Patri"],
+  "Oficina":["Oficina"],
+};
+
+const BUDGET = 800000;
+const BRANDS = [...new Set(PRODUCTS.map(p=>p.brand))];
+const CATEGORIES = [...new Set(PRODUCTS.map(p=>p.cat))];
+const fmt = n => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n);
+
+// ── Product Image Component (fetches from Mercado Libre) ──────────
+const imgCache = {};
+function ProductImage({brand, model, emoji}) {
+  const [src, setSrc] = useState(imgCache[brand+"_"+model] || null);
+  const [err, setErr] = useState(false);
+  useEffect(() => {
+    const key = brand+"_"+model;
+    if (imgCache[key]) { setSrc(imgCache[key]); return; }
+    let cancelled = false;
+    fetch("https://api.mercadolibre.com/sites/MLA/search?q="+encodeURIComponent(brand+" "+model)+"&limit=1")
+      .then(r=>r.json())
+      .then(data=>{
+        if (cancelled) return;
+        if (data.results && data.results[0] && data.results[0].thumbnail) {
+          const url = data.results[0].thumbnail.replace("http://","https://").replace("-I.jpg","-O.jpg");
+          imgCache[key] = url;
+          setSrc(url);
+        } else { setErr(true); }
+      })
+      .catch(()=>{ if(!cancelled) setErr(true); });
+    return ()=>{ cancelled=true; };
+  }, [brand, model]);
+  if (err || !src) return <div style={{fontSize:56,lineHeight:1}}>{emoji}</div>;
+  return <img src={src} alt={model} style={{maxHeight:100,maxWidth:160,objectFit:"contain",filter:"drop-shadow(0 4px 12px rgba(0,0,0,.3))"}} onError={()=>setErr(true)} />;
+}
+
+function App() {
+  const [view, setView] = useState("login");
+  const [family, setFamily] = useState("");
+  const [member, setMember] = useState("");
+  const [allOrders, setAllOrders] = useState({});
+  const [brandFilter, setBrandFilter] = useState("all");
+  const [catFilter, setCatFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    const unsub = storage.onValue("orders", data => { setAllOrders(data); setLoading(false); });
+    return unsub;
+  }, []);
+
+  const cart = useMemo(() => {
+    if (!family || !member) return {};
+    return allOrders[family+"__"+member] || {};
+  }, [family, member, allOrders]);
+
+  const cartTotal = useMemo(() =>
+    Object.entries(cart).reduce((s,[id,q]) => { const p=PRODUCTS.find(x=>x.id===id); return s+(p?p.price*q:0); },0), [cart]);
+  const cartCount = useMemo(() => Object.values(cart).reduce((s,q)=>s+q,0), [cart]);
+
+  const saveCart = useCallback((newCart) => {
+    const key = family+"__"+member;
+    const updated = {...allOrders, [key]: newCart};
+    // Clean empty carts
+    if (Object.keys(newCart).length === 0) delete updated[key];
+    setAllOrders(updated);
+    storage.set("orders", updated);
+  }, [family, member, allOrders]);
+
+  const addToCart = (id) => {
+    const p = PRODUCTS.find(x=>x.id===id);
+    if (cartTotal + p.price > BUDGET) { showToast("⚠️ Supera el presupuesto de "+fmt(BUDGET)); return; }
+    saveCart({...cart, [id]: (cart[id]||0)+1});
+    showToast("✓ "+p.model+" agregado");
+  };
+  const removeFromCart = (id) => {
+    if (!cart[id]) return;
+    const nc = {...cart};
+    if (nc[id]<=1) delete nc[id]; else nc[id]--;
+    saveCart(nc);
+  };
+
+  const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(""),2000); };
+
+  const filteredProducts = useMemo(() =>
+    PRODUCTS.filter(p => {
+      if (brandFilter!=="all" && p.brand!==brandFilter) return false;
+      if (catFilter!=="all" && p.cat!==catFilter) return false;
+      if (search) { const q=search.toLowerCase(); return p.name.toLowerCase().includes(q)||p.model.toLowerCase().includes(q)||p.brand.toLowerCase().includes(q); }
+      return true;
+    }), [brandFilter,catFilter,search]);
+
+  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0a0a0a",color:"#e0d5c1",fontFamily:"'DM Serif Display',serif",fontSize:18}}>Cargando...</div>;
+
+  // ── LOGIN ──
+  if (view==="login") return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(145deg,#0a0a0a 0%,#1a1510 50%,#0a0a0a 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{maxWidth:480,width:"100%"}}>
+        <div style={{textAlign:"center",marginBottom:48}}>
+          <div style={{fontSize:13,letterSpacing:6,color:"#8b7355",textTransform:"uppercase",marginBottom:12}}>Filmsuez</div>
+          <h1 style={{fontSize:38,color:"#e0d5c1",margin:0,lineHeight:1.1}}>Sistema de Canjes</h1>
+          <div style={{width:60,height:1,background:"#8b7355",margin:"20px auto"}}/>
+          <p style={{color:"#7a7060",fontSize:14}}>2026 — Electrodomésticos</p>
+          {!USE_FIREBASE && <p style={{color:"#c06040",fontSize:12,marginTop:8}}>⚠ Modo local — los datos se guardan solo en este dispositivo</p>}
+        </div>
+        <div style={{background:"#141210",border:"1px solid #2a2520",borderRadius:12,padding:32}}>
+          <label style={{display:"block",color:"#8b7355",fontSize:11,letterSpacing:3,textTransform:"uppercase",marginBottom:8}}>Familia</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:24}}>
+            {Object.keys(FAMILIES).map(f=>(
+              <button key={f} onClick={()=>{setFamily(f);setMember("");}} style={{padding:"14px 12px",borderRadius:8,border:family===f?"1px solid #8b7355":"1px solid #2a2520",background:family===f?"#1e1a14":"transparent",color:family===f?"#e0d5c1":"#7a7060",cursor:"pointer",fontSize:14,transition:"all .2s"}}>{f}</button>
+            ))}
+          </div>
+          {family && <>
+            <label style={{display:"block",color:"#8b7355",fontSize:11,letterSpacing:3,textTransform:"uppercase",marginBottom:8}}>¿Quién sos?</label>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:24}}>
+              {FAMILIES[family].map(m=>(
+                <button key={m} onClick={()=>setMember(m)} style={{padding:"12px 20px",borderRadius:8,border:member===m?"1px solid #8b7355":"1px solid #2a2520",background:member===m?"#1e1a14":"transparent",color:member===m?"#e0d5c1":"#7a7060",cursor:"pointer",fontSize:15,transition:"all .2s"}}>{m}</button>
+              ))}
+            </div>
+          </>}
+          {family && member && (
+            <button onClick={()=>setView("catalog")} style={{width:"100%",padding:"16px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#8b7355,#a08660)",color:"#0a0a0a",cursor:"pointer",fontSize:16,fontWeight:600,letterSpacing:1}}>Ingresar al Catálogo →</button>
+          )}
+        </div>
+        <div style={{textAlign:"center",marginTop:24}}>
+          <button onClick={()=>setView("admin")} style={{background:"none",border:"none",color:"#5a5040",cursor:"pointer",fontSize:12,letterSpacing:2,textTransform:"uppercase",textDecoration:"underline",textUnderlineOffset:4}}>Panel Administrador</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── ADMIN ──
+  if (view==="admin") {
+    const ordersByFamily = {};
+    Object.entries(allOrders).forEach(([k,items])=>{
+      const [fam,mem] = k.split("__");
+      if(!ordersByFamily[fam]) ordersByFamily[fam]={};
+      ordersByFamily[fam][mem]=items;
+    });
+    const allAgg = {};
+    Object.values(allOrders).forEach(items => Object.entries(items).forEach(([pid,qty])=>{ allAgg[pid]=(allAgg[pid]||0)+qty; }));
+
+    return (
+      <div style={{minHeight:"100vh",background:"#0a0a0a",color:"#e0d5c1",padding:24}}>
+        <div style={{maxWidth:900,margin:"0 auto"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:32,flexWrap:"wrap",gap:12}}>
+            <div><div style={{fontSize:11,letterSpacing:4,color:"#8b7355",textTransform:"uppercase"}}>Administración</div><h1 style={{fontSize:28,margin:"4px 0 0"}}>Reporte de Canjes</h1></div>
+            <button onClick={()=>setView("login")} style={{background:"#1e1a14",border:"1px solid #2a2520",color:"#8b7355",padding:"10px 20px",borderRadius:8,cursor:"pointer",fontSize:13}}>← Volver</button>
+          </div>
+          {Object.keys(FAMILIES).map(fam=>{
+            const fo=ordersByFamily[fam]||{};
+            const ft=Object.values(fo).reduce((s,items)=>s+Object.entries(items).reduce((s2,[pid,q])=>{const p=PRODUCTS.find(x=>x.id===pid);return s2+(p?p.price*q:0);},0),0);
+            return (
+              <div key={fam} style={{background:"#141210",border:"1px solid #2a2520",borderRadius:12,padding:24,marginBottom:16}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:16}}><h2 style={{fontSize:20,margin:0}}>Familia {fam}</h2><span style={{color:"#8b7355",fontSize:16,fontWeight:600}}>{fmt(ft)}</span></div>
+                {Object.keys(fo).length===0?<p style={{color:"#5a5040",fontStyle:"italic"}}>Sin pedidos aún</p>:
+                Object.entries(fo).map(([mem,items])=>{
+                  const mt=Object.entries(items).reduce((s,[pid,q])=>{const p=PRODUCTS.find(x=>x.id===pid);return s+(p?p.price*q:0);},0);
+                  return (<div key={mem} style={{borderTop:"1px solid #1e1a14",paddingTop:12,marginTop:12}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{color:"#a08660",fontSize:14,fontWeight:600}}>{mem}</span><span style={{color:"#7a7060",fontSize:13}}>{fmt(mt)}</span></div>
+                    {Object.entries(items).map(([pid,q])=>{const p=PRODUCTS.find(x=>x.id===pid);if(!p)return null;return <div key={pid} style={{display:"flex",justifyContent:"space-between",padding:"4px 0 4px 16px",fontSize:13,color:"#7a7060"}}><span>{q}x {p.brand} {p.model} — {p.name}</span><span>{fmt(p.price*q)}</span></div>;})}
+                  </div>);
+                })}
+              </div>);
+          })}
+          {Object.keys(allAgg).length>0 && (
+            <div style={{background:"#141210",border:"1px solid #2a2520",borderRadius:12,padding:24,marginTop:32}}>
+              <h2 style={{fontSize:20,margin:"0 0 16px"}}>Consolidado para Pedido</h2>
+              {Object.entries(allAgg).sort((a,b)=>{const pa=PRODUCTS.find(x=>x.id===a[0]),pb=PRODUCTS.find(x=>x.id===b[0]);return(pa?.brand||"").localeCompare(pb?.brand||"");}).map(([pid,q])=>{
+                const p=PRODUCTS.find(x=>x.id===pid);if(!p)return null;
+                return <div key={pid} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:13,color:"#7a7060",borderBottom:"1px solid #1a1814"}}><span><strong style={{color:"#e0d5c1"}}>{q}x</strong> [{p.brand}] {p.model} — {p.name}</span><span style={{color:"#a08660",whiteSpace:"nowrap",marginLeft:12}}>{fmt(p.price*q)}</span></div>;
+              })}
+              <div style={{borderTop:"1px solid #2a2520",marginTop:16,paddingTop:12,display:"flex",justifyContent:"space-between",fontSize:16}}><span style={{color:"#8b7355"}}>Total General</span><span style={{fontWeight:600}}>{fmt(Object.entries(allAgg).reduce((s,[pid,q])=>{const p=PRODUCTS.find(x=>x.id===pid);return s+(p?p.price*q:0);},0))}</span></div>
+            </div>
+          )}
+          <button onClick={()=>{storage.set("orders",{});setAllOrders({});}} style={{marginTop:24,background:"none",border:"1px solid #4a2020",color:"#8a4040",padding:"10px 20px",borderRadius:8,cursor:"pointer",fontSize:12,letterSpacing:1}}>Resetear todos los pedidos</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── CONFIRMED ──
+  if (view==="confirmed") return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(145deg,#0a0a0a 0%,#1a1510 50%,#0a0a0a 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{maxWidth:520,width:"100%",textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:16}}>✅</div>
+        <h1 style={{fontSize:32,color:"#e0d5c1",margin:"0 0 8px"}}>¡Selección confirmada!</h1>
+        <p style={{color:"#8b7355",fontSize:16,marginBottom:32}}>{member} — Familia {family}</p>
+        <div style={{background:"#141210",border:"1px solid #2a2520",borderRadius:12,padding:24,textAlign:"left",marginBottom:24}}>
+          {Object.entries(cart).map(([pid,q])=>{const p=PRODUCTS.find(x=>x.id===pid);if(!p)return null;return <div key={pid} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #1a1814",fontSize:14,color:"#9a9080"}}><span><strong style={{color:"#e0d5c1"}}>{q}x</strong> {p.name}</span><span style={{color:"#a08660",whiteSpace:"nowrap",marginLeft:12}}>{fmt(p.price*q)}</span></div>;})}
+          <div style={{display:"flex",justifyContent:"space-between",paddingTop:16,marginTop:8,fontSize:18}}><span style={{color:"#8b7355",fontWeight:600}}>Total</span><span style={{color:"#e0d5c1",fontWeight:700}}>{fmt(cartTotal)}</span></div>
+        </div>
+        <p style={{color:"#5a5040",fontSize:13,marginBottom:24}}>Tu pedido ya quedó registrado. Podés cerrar esta página.</p>
+        <div style={{display:"flex",gap:12,justifyContent:"center"}}>
+          <button onClick={()=>setView("catalog")} style={{background:"#1e1a14",border:"1px solid #2a2520",color:"#8b7355",padding:"12px 24px",borderRadius:8,cursor:"pointer",fontSize:14}}>← Modificar selección</button>
+          <button onClick={()=>{setView("login");setFamily("");setMember("");}} style={{background:"linear-gradient(135deg,#8b7355,#a08660)",color:"#0a0a0a",border:"none",padding:"12px 24px",borderRadius:8,cursor:"pointer",fontSize:14,fontWeight:600}}>Listo</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── CATALOG ──
+  const remaining=BUDGET-cartTotal, pct=(cartTotal/BUDGET)*100;
+  return (
+    <div style={{minHeight:"100vh",background:"#0a0a0a"}}>
+      <div style={{background:"#0e0d0b",borderBottom:"1px solid #1e1a14",padding:"12px 20px",position:"sticky",top:0,zIndex:100}}>
+        <div style={{maxWidth:1100,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+          <div><span style={{fontSize:11,letterSpacing:3,color:"#8b7355",textTransform:"uppercase"}}>{family}</span><span style={{color:"#3a3530",margin:"0 8px"}}>|</span><span style={{color:"#7a7060",fontSize:14,fontWeight:600}}>{member}</span></div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{textAlign:"right"}}><div style={{fontSize:11,color:remaining<50000?"#c06040":"#7a7060"}}>{cartCount} items</div><div style={{fontSize:16,fontWeight:700,color:remaining<50000?"#e07050":"#e0d5c1"}}>{fmt(cartTotal)}</div></div>
+            <div style={{width:100,height:6,background:"#1e1a14",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",width:`${Math.min(pct,100)}%`,background:pct>90?"#c06040":"#8b7355",borderRadius:3,transition:"width .3s"}}/></div>
+            <div style={{fontSize:10,color:"#5a5040"}}>{fmt(BUDGET)}</div>
+          </div>
+        </div>
+      </div>
+      <div style={{maxWidth:1100,margin:"0 auto",padding:"16px 20px 120px"}}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:16,alignItems:"center"}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar producto..." style={{flex:"1 1 200px",padding:"10px 16px",borderRadius:8,border:"1px solid #2a2520",background:"#141210",color:"#e0d5c1",fontSize:14,outline:"none",minWidth:140}}/>
+          <select value={brandFilter} onChange={e=>setBrandFilter(e.target.value)} style={{padding:"10px 12px",borderRadius:8,border:"1px solid #2a2520",background:"#141210",color:"#e0d5c1",fontSize:13}}>
+            <option value="all">Todas las marcas</option>{BRANDS.map(b=><option key={b} value={b}>{b}</option>)}
+          </select>
+          <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} style={{padding:"10px 12px",borderRadius:8,border:"1px solid #2a2520",background:"#141210",color:"#e0d5c1",fontSize:13}}>
+            <option value="all">Categorías</option>{CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div style={{fontSize:12,color:"#5a5040",marginBottom:12}}>{filteredProducts.length} productos</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16}}>
+          {filteredProducts.map(p=>{
+            const inCart=cart[p.id]||0, canAdd=cartTotal+p.price<=BUDGET;
+            const brandColors = {"Crown":"#c43030","Ken Brown":"#2060a0","Ultracomb":"#b82020","Yelmo":"#2080a0"};
+            const bc = brandColors[p.brand]||"#8b7355";
+            return (
+              <div key={p.id} style={{background:"#141210",border:inCart>0?"2px solid #8b7355":"1px solid #1e1a14",borderRadius:12,overflow:"hidden",display:"flex",flexDirection:"column",transition:"all .2s",position:"relative"}}>
+                {inCart>0&&<div style={{position:"absolute",top:12,right:12,background:"#8b7355",color:"#0a0a0a",borderRadius:14,width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,zIndex:2}}>{inCart}</div>}
+                <div style={{background:`linear-gradient(135deg, ${bc}15 0%, ${bc}08 50%, #14121000 100%)`,padding:"20px",display:"flex",alignItems:"center",justifyContent:"center",minHeight:130,position:"relative"}}>
+                  <ProductImage brand={p.brand} model={p.model} emoji={p.img} />
+                  <div style={{position:"absolute",top:10,left:12,fontSize:9,letterSpacing:2,color:bc,textTransform:"uppercase",fontWeight:700,opacity:.8}}>{p.brand}</div>
+                </div>
+                <div style={{padding:"14px 18px 18px",display:"flex",flexDirection:"column",flex:1}}>
+                  <div style={{fontSize:16,color:"#e0d5c1",fontWeight:700,marginBottom:4,lineHeight:1.3}}>{p.name}</div>
+                  <div style={{fontSize:11,color:"#6a6050",marginBottom:4,flex:1}}>{p.model}</div>
+                  <a href={"https://listado.mercadolibre.com.ar/"+encodeURIComponent(p.brand+" "+p.model)} target="_blank" rel="noopener" style={{fontSize:11,color:"#3483fa",textDecoration:"none",marginBottom:10,display:"inline-block"}}>🔍 Ver en Mercado Libre</a>
+                  <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:12}}>
+                    <div style={{fontSize:20,color:"#a08660",fontWeight:700}}>{fmt(p.price)}</div>
+                    <div style={{fontSize:10,color:"#5a5040",background:"#1a1814",padding:"3px 8px",borderRadius:4}}>{p.cat}</div>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>addToCart(p.id)} disabled={!canAdd} style={{flex:1,padding:"12px",borderRadius:8,border:"none",background:canAdd?"#8b7355":"#2a2520",color:canAdd?"#0a0a0a":"#5a5040",cursor:canAdd?"pointer":"not-allowed",fontSize:14,fontWeight:600,transition:"background .2s"}}>{canAdd?(inCart>0?"+ Agregar otro":"Agregar"):"Sin cupo"}</button>
+                    {inCart>0&&<button onClick={()=>removeFromCart(p.id)} style={{padding:"12px 16px",borderRadius:8,border:"1px solid #3a2520",background:"transparent",color:"#c06040",cursor:"pointer",fontSize:16,fontWeight:700}}>−</button>}
+                  </div>
+                </div>
+              </div>);
+          })}
+        </div>
+      </div>
+      {cartCount>0&&<div style={{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",background:"#1e1a14",border:"1px solid #8b7355",borderRadius:12,padding:"12px 20px",display:"flex",gap:16,alignItems:"center",boxShadow:"0 8px 32px rgba(0,0,0,.6)",zIndex:100,flexWrap:"wrap",justifyContent:"center"}}>
+        <span style={{color:"#8b7355",fontSize:13}}>🛒 {cartCount} prod.</span>
+        <span style={{color:"#e0d5c1",fontSize:16,fontWeight:700}}>{fmt(cartTotal)}</span>
+        <span style={{color:remaining<100000?"#e07050":"#5a5040",fontSize:12}}>Quedan {fmt(remaining)}</span>
+        <button onClick={()=>{if(confirm("¿Confirmar tu selección de "+cartCount+" productos por "+fmt(cartTotal)+"?")){setView("confirmed");}}} style={{background:"linear-gradient(135deg,#8b7355,#a08660)",color:"#0a0a0a",border:"none",padding:"8px 16px",borderRadius:6,cursor:"pointer",fontSize:13,fontWeight:700}}>Finalizar selección ✓</button>
+        <button onClick={()=>{if(confirm("¿Cancelar la selección? Se van a borrar todos los productos elegidos.")){saveCart({});setView("login");setFamily("");setMember("");}}} style={{background:"none",border:"1px solid #4a2520",color:"#c06040",padding:"8px 14px",borderRadius:6,cursor:"pointer",fontSize:12}}>Cancelar selección</button>
+      </div>}
+      {cartCount===0&&<div style={{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",background:"#1e1a14",border:"1px solid #2a2520",borderRadius:12,padding:"12px 20px",display:"flex",gap:16,alignItems:"center",boxShadow:"0 8px 32px rgba(0,0,0,.6)",zIndex:100}}>
+        <span style={{color:"#5a5040",fontSize:13}}>Seleccioná productos del catálogo</span>
+        <button onClick={()=>{setView("login");setFamily("");setMember("");}} style={{background:"none",border:"1px solid #2a2520",color:"#7a7060",padding:"8px 14px",borderRadius:6,cursor:"pointer",fontSize:12}}>Cancelar selección</button>
+      </div>}
+      {toast&&<div style={{position:"fixed",top:80,left:"50%",transform:"translateX(-50%)",background:"#1e1a14",border:"1px solid #8b7355",borderRadius:8,padding:"10px 20px",color:"#e0d5c1",fontSize:13,zIndex:200,boxShadow:"0 4px 16px rgba(0,0,0,.4)"}} className="fade-in">{toast}</div>}
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+</script>
+</body>
+</html>
